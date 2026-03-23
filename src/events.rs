@@ -50,6 +50,11 @@ impl Events {
         );
     }
 
+    /// Emit event when an attestation is renewed
+    pub fn attestation_renewed(env: &Env, attestation_id: &String, issuer: &Address, new_expiration: Option<u64>) {
+        env.events().publish(
+            (symbol_short!("renewed"), issuer.clone()),
+            (attestation_id.clone(), new_expiration),
     /// Emit an event when an expired attestation is encountered during a check.
     ///
     /// This event is **not** emitted for revoked attestations; revocation takes
