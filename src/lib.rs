@@ -14,7 +14,7 @@ use crate::events::Events;
 use crate::storage::Storage;
 use crate::types::{
     Attestation, AttestationStatus, ClaimTypeInfo, ContractMetadata, Error, FeeConfig,
-    IssuerMetadata,
+    IssuerMetadata, TtlConfig,
 };
 use crate::validation::Validation;
 
@@ -124,7 +124,7 @@ pub struct TrustLinkContract;
 
 #[contractimpl]
 impl TrustLinkContract {
-    pub fn initialize(env: Env, admin: Address) -> Result<(), Error> {
+    pub fn initialize(env: Env, admin: Address, ttl_days: Option<u32>) -> Result<(), Error> {
         if Storage::has_admin(&env) {
             return Err(Error::AlreadyInitialized);
         }
@@ -133,6 +133,14 @@ impl TrustLinkContract {
         Storage::set_admin(&env, &admin);
         Storage::set_version(&env, &String::from_str(&env, "1.0.0"));
         Storage::set_fee_config(&env, &default_fee_config(&admin));
+
+        // Set TTL configuration if provided
+        if let Some(days) = ttl_days {
+            Storage::set_ttl_config(&env, &TtlConfig { ttl_days: days });
+        } else {
+            Storage::set_ttl_config(&env, &TtlConfig { ttl_days: 30 });
+        }
+
         Events::admin_initialized(&env, &admin, env.ledger().timestamp());
         Ok(())
     }

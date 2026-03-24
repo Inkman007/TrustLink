@@ -71,8 +71,9 @@ src/
 ### Initialization
 
 ```rust
-// Deploy and initialize with admin
-contract.initialize(&admin_address);
+// Deploy and initialize with admin and optional custom TTL (days)
+// ttl_days: None uses default 30 days, or Some(7) for custom TTL
+contract.initialize(&admin_address, &None);
 ```
 
 ### Configure Attestation Fees

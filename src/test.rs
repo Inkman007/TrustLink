@@ -36,7 +36,7 @@ fn setup(env: &Env) -> (Address, Address, TrustLinkContractClient<'_>) {
     let (_, client) = create_test_contract(env);
     let admin = Address::generate(env);
     let issuer = Address::generate(env);
-    client.initialize(&admin);
+    client.initialize(&admin, &None);
     client.register_issuer(&admin, &issuer);
     (admin, issuer, client)
 }
@@ -60,7 +60,7 @@ fn test_initialize_and_get_admin() {
     let admin = Address::generate(&env);
     let (_, client) = create_test_contract(&env);
 
-    client.initialize(&admin);
+    client.initialize(&admin, &None);
     assert_eq!(client.get_admin(), admin);
 }
 
@@ -360,7 +360,7 @@ fn test_bridge_attestation_requires_registered_bridge() {
     let source_chain = String::from_str(&env, "ethereum");
     let source_tx = String::from_str(&env, "0xabc123");
 
-    client.initialize(&admin);
+    client.initialize(&admin, &None);
 
     let result =
         client.try_bridge_attestation(&bridge, &subject, &claim_type, &source_chain, &source_tx);
@@ -435,7 +435,7 @@ fn test_bridge_contract_can_create_attestation() {
     let source_chain = String::from_str(&env, "ethereum");
     let source_tx = String::from_str(&env, "0xdef456");
 
-    client.initialize(&admin);
+    client.initialize(&admin, &None);
     client.register_bridge(&admin, &bridge_id);
 
     let id = bridge_client.bridge_claim(
@@ -479,7 +479,7 @@ fn test_import_attestation_requires_registered_issuer() {
     let subject = Address::generate(&env);
     let claim_type = String::from_str(&env, "KYC_PASSED");
     let (_, client) = create_test_contract(&env);
-    client.initialize(&admin);
+    client.initialize(&admin, &None);
 
     let result = client.try_import_attestation(
         &admin,
@@ -556,4 +556,31 @@ fn test_imported_attestation_can_be_expired_today() {
         types::AttestationStatus::Expired
     );
     assert!(!client.has_valid_claim(&subject, &claim_type));
+}
+
+#[test]
+fn test_initialize_with_custom_ttl() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let (_, client) = create_test_contract(&env);
+
+    // Initialize with custom TTL of 7 days
+    let custom_ttl = Some(7u32);
+    client.initialize(&admin, &custom_ttl);
+    assert_eq!(client.get_admin(), admin);
+}
+
+#[test]
+fn test_initialize_with_default_ttl() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let (_, client) = create_test_contract(&env);
+
+    // Initialize without custom TTL (uses default 30 days)
+    client.initialize(&admin, &None);
+    assert_eq!(client.get_admin(), admin);
 }
