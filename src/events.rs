@@ -39,21 +39,17 @@ impl Events {
         );
     }
 
-    /// Emitted when the contract is successfully initialized.
-    ///
-    /// topics: ("admin_init",)
-    /// data:   (admin: Address, timestamp: u64)
-    pub fn admin_initialized(env: &Env, admin: &Address, timestamp: u64) {
-        env.events().publish(
-            (symbol_short!("admin_init"),),
-            (admin.clone(), timestamp),
-        );
-    }
-
     pub fn attestation_updated(env: &Env, attestation_id: &String, issuer: &Address, new_expiration: Option<u64>) {
         env.events().publish(
             (symbol_short!("updated"), issuer.clone()),
             (attestation_id.clone(), new_expiration),
+        );
+    }
+
+    pub fn admin_initialized(env: &Env, admin: &Address, timestamp: u64) {
+        env.events().publish(
+            (symbol_short!("adm_init"),),
+            (admin.clone(), timestamp),
         );
     }
 

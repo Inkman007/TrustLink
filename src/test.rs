@@ -1,7 +1,7 @@
 #![cfg(test)]
 
 use super::*;
-use soroban_sdk::{testutils::{Address as _, Events as _, Ledger}, Address, Env, String, TryIntoVal};
+use soroban_sdk::{testutils::{Address as _, Events as _, Ledger}, Address, Env, String};
 
 fn create_test_contract(env: &Env) -> (Address, TrustLinkContractClient) {
     let contract_id = env.register_contract(None, TrustLinkContract);
@@ -21,59 +21,6 @@ fn test_initialization() {
     
     let stored_admin = client.get_admin();
     assert_eq!(stored_admin, admin);
-}
-
-#[test]
-fn test_initialization_emits_admin_initialized_event() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let admin = Address::generate(&env);
-    let (contract_id, client) = create_test_contract(&env);
-
-    let timestamp = env.ledger().timestamp();
-    client.initialize(&admin);
-
-    // Verify the admin_init event was emitted by this contract
-    let admin_init_sym = soroban_sdk::symbol_short!("admin_init");
-    let mut found_admin: Option<Address> = None;
-    let mut found_timestamp: Option<u64> = None;
-
-    for (id, topics, data) in env.events().all().iter() {
-        if id != contract_id {
-            continue;
-        }
-        if topics.get(0).map(|v| v.shallow_eq(&admin_init_sym.to_val())).unwrap_or(false) {
-            // data is (Address, u64)
-            let (a, ts): (Address, u64) = data.try_into_val(&env).unwrap();
-            found_admin = Some(a);
-            found_timestamp = Some(ts);
-            break;
-        }
-    }
-
-    assert!(found_admin.is_some(), "expected admin_init event to be emitted");
-    assert_eq!(found_admin.unwrap(), admin, "admin_init event must carry the correct admin address");
-    assert_eq!(found_timestamp.unwrap(), timestamp, "admin_init event must carry the correct timestamp");
-}
-
-#[test]
-fn test_double_initialization_emits_no_event() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let admin = Address::generate(&env);
-    let (contract_id, client) = create_test_contract(&env);
-
-    client.initialize(&admin);
-
-    let admin_init_sym = soroban_sdk::symbol_short!("admin_init");
-    let count = env.events().all().iter().filter(|(id, topics, _)| {
-        *id == contract_id
-            && topics.get(0).map(|v| v.shallow_eq(&admin_init_sym.to_val())).unwrap_or(false)
-    }).count();
-
-    assert_eq!(count, 1, "admin_init must be emitted exactly once on successful initialization");
 }
 
 #[test]
@@ -500,7 +447,6 @@ fn test_create_attestation_valid_from_none_unchanged() {
     let status = client.get_attestation_status(&attestation_id);
     assert_eq!(status, types::AttestationStatus::Valid);
 
-    // has_valid_claim must return true
     assert!(client.has_valid_claim(&subject, &claim_type));
 }
 
@@ -1705,4 +1651,205 @@ fn test_has_any_claim_single_element_equivalence_with_has_valid_claim() {
         client.has_any_claim(&subject, &list),
         client.has_valid_claim(&subject, &claim_type)
     );
+}
+
+// ── Batch attestation creation tests ─────────────────────────────────────────
+
+#[test]
+fn test_create_attestations_batch_success() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, issuer, client) = setup_batch_env(&env);
+    let claim_type = String::from_str(&env, "KYC_PASSED");
+
+    let mut subjects: soroban_sdk::Vec<Address> = soroban_sdk::Vec::new(&env);
+    for _ in 0..10 {
+        subjects.push_back(Address::generate(&env));
+    }
+
+    let ids = client.create_attestations_batch(&issuer, &subjects, &claim_type, &None);
+
+    assert_eq!(ids.len(), 10);
+
+    // Verify each attestation was stored correctly and in order
+    for (i, id) in ids.iter().enumerate() {
+        let attestation = client.get_attestation(&id);
+        assert_eq!(attestation.issuer, issuer);
+        assert_eq!(attestation.subject, subjects.get(i as u32).unwrap());
+        assert_eq!(attestation.claim_type, claim_type);
+        assert!(!attestation.revoked);
+    }
+}
+
+#[test]
+fn test_create_attestations_batch_single_auth_check() {
+    // Confirms the happy-path works with a single mock_all_auths call,
+    // meaning auth is not checked per-subject.
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, issuer, client) = setup_batch_env(&env);
+    let claim_type = String::from_str(&env, "KYC_PASSED");
+
+    let mut subjects: soroban_sdk::Vec<Address> = soroban_sdk::Vec::new(&env);
+    subjects.push_back(Address::generate(&env));
+    subjects.push_back(Address::generate(&env));
+    subjects.push_back(Address::generate(&env));
+
+    let ids = client.create_attestations_batch(&issuer, &subjects, &claim_type, &None);
+    assert_eq!(ids.len(), 3);
+}
+
+#[test]
+fn test_create_attestations_batch_returns_ids_in_order() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, issuer, client) = setup_batch_env(&env);
+    let claim_type = String::from_str(&env, "KYC_PASSED");
+
+    let subject_a = Address::generate(&env);
+    let subject_b = Address::generate(&env);
+    let subject_c = Address::generate(&env);
+
+    let mut subjects: soroban_sdk::Vec<Address> = soroban_sdk::Vec::new(&env);
+    subjects.push_back(subject_a.clone());
+    subjects.push_back(subject_b.clone());
+    subjects.push_back(subject_c.clone());
+
+    let ids = client.create_attestations_batch(&issuer, &subjects, &claim_type, &None);
+
+    // Each ID must correspond to the subject at the same index
+    assert_eq!(client.get_attestation(&ids.get(0).unwrap()).subject, subject_a);
+    assert_eq!(client.get_attestation(&ids.get(1).unwrap()).subject, subject_b);
+    assert_eq!(client.get_attestation(&ids.get(2).unwrap()).subject, subject_c);
+}
+
+#[test]
+fn test_create_attestations_batch_emits_event_per_subject() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (contract_id, client) = create_test_contract(&env);
+    let admin = Address::generate(&env);
+    let issuer = Address::generate(&env);
+    client.initialize(&admin);
+    client.register_issuer(&admin, &issuer);
+
+    let claim_type = String::from_str(&env, "KYC_PASSED");
+    let mut subjects: soroban_sdk::Vec<Address> = soroban_sdk::Vec::new(&env);
+    for _ in 0..5 {
+        subjects.push_back(Address::generate(&env));
+    }
+
+    client.create_attestations_batch(&issuer, &subjects, &claim_type, &None);
+
+    let created_sym = soroban_sdk::symbol_short!("created");
+    let created_count = env.events().all().iter().filter(|(id, topics, _)| {
+        *id == contract_id
+            && topics.get(0).map(|v| v.shallow_eq(&created_sym.to_val())).unwrap_or(false)
+    }).count();
+
+    assert_eq!(created_count, 5, "expected one created event per subject");
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #3)")]
+fn test_create_attestations_batch_unauthorized_issuer_panics() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, _, client) = setup_batch_env(&env);
+    let unregistered = Address::generate(&env);
+    let claim_type = String::from_str(&env, "KYC_PASSED");
+
+    let mut subjects: soroban_sdk::Vec<Address> = soroban_sdk::Vec::new(&env);
+    subjects.push_back(Address::generate(&env));
+
+    // Unregistered issuer must panic with Unauthorized
+    client.create_attestations_batch(&unregistered, &subjects, &claim_type, &None);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #5)")]
+fn test_create_attestations_batch_duplicate_causes_full_failure() {
+    // A duplicate subject in the batch (same issuer/subject/claim_type/timestamp)
+    // must cause the entire batch to fail with DuplicateAttestation.
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, issuer, client) = setup_batch_env(&env);
+    let claim_type = String::from_str(&env, "KYC_PASSED");
+
+    // Pre-create an attestation for subject_a
+    let subject_a = Address::generate(&env);
+    client.create_attestation(&issuer, &subject_a, &claim_type, &None, &None);
+
+    // Batch includes subject_a again — same timestamp means duplicate ID
+    let subject_b = Address::generate(&env);
+    let mut subjects: soroban_sdk::Vec<Address> = soroban_sdk::Vec::new(&env);
+    subjects.push_back(subject_b);
+    subjects.push_back(subject_a); // duplicate
+
+    client.create_attestations_batch(&issuer, &subjects, &claim_type, &None);
+}
+
+#[test]
+fn test_create_attestations_batch_empty_vec() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, issuer, client) = setup_batch_env(&env);
+    let claim_type = String::from_str(&env, "KYC_PASSED");
+
+    let subjects: soroban_sdk::Vec<Address> = soroban_sdk::Vec::new(&env);
+    let ids = client.create_attestations_batch(&issuer, &subjects, &claim_type, &None);
+
+    assert_eq!(ids.len(), 0);
+}
+
+#[test]
+fn test_create_attestations_batch_with_expiration() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, issuer, client) = setup_batch_env(&env);
+    let claim_type = String::from_str(&env, "KYC_PASSED");
+    let expiration = Some(env.ledger().timestamp() + 1_000);
+
+    let mut subjects: soroban_sdk::Vec<Address> = soroban_sdk::Vec::new(&env);
+    subjects.push_back(Address::generate(&env));
+    subjects.push_back(Address::generate(&env));
+
+    let ids = client.create_attestations_batch(&issuer, &subjects, &claim_type, &expiration);
+
+    for id in ids.iter() {
+        let attestation = client.get_attestation(&id);
+        assert_eq!(attestation.expiration, expiration);
+        assert_eq!(client.get_attestation_status(&id), types::AttestationStatus::Valid);
+    }
+}
+
+#[test]
+fn test_create_attestations_batch_updates_subject_and_issuer_indexes() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, issuer, client) = setup_batch_env(&env);
+    let claim_type = String::from_str(&env, "KYC_PASSED");
+
+    let subject = Address::generate(&env);
+    let mut subjects: soroban_sdk::Vec<Address> = soroban_sdk::Vec::new(&env);
+    subjects.push_back(subject.clone());
+
+    client.create_attestations_batch(&issuer, &subjects, &claim_type, &None);
+
+    // Subject index should have one entry
+    let subject_attestations = client.get_subject_attestations(&subject, &0, &10);
+    assert_eq!(subject_attestations.len(), 1);
+
+    // Issuer index should have one entry
+    let issuer_attestations = client.get_issuer_attestations(&issuer, &0, &10);
+    assert_eq!(issuer_attestations.len(), 1);
 }

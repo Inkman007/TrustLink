@@ -85,6 +85,7 @@ impl TrustLinkContract {
         Events::issuer_registered(&env, &issuer, &admin);
         Ok(())
     }
+
     /// Remove an address from the authorized issuer registry.
     ///
     /// Only the current admin may call this function. Removing an issuer does
@@ -194,6 +195,78 @@ impl TrustLinkContract {
         Events::attestation_created(&env, &attestation);
 
         Ok(attestation_id)
+    }
+
+    /// Create multiple attestations in a single call (issuer only).
+    ///
+    /// Authorization is checked once for the issuer. Each subject gets an
+    /// attestation with the same `claim_type` and `expiration`. If any subject
+    /// would produce a duplicate attestation ID the entire batch fails
+    /// immediately — no partial writes occur.
+    ///
+    /// Emits an [`events::Events::attestation_created`] event for each created
+    /// attestation.
+    ///
+    /// # Parameters
+    /// - `issuer` — authorized issuer creating the attestations (must authorize).
+    /// - `subjects` — list of subject addresses to attest.
+    /// - `claim_type` — free-form claim label applied to every attestation.
+    /// - `expiration` — optional Unix timestamp after which attestations expire.
+    ///
+    /// # Returns
+    /// A [`Vec<String>`] of created attestation IDs in the same order as
+    /// `subjects`.
+    ///
+    /// # Errors
+    /// - [`Error::Unauthorized`] — `issuer` is not a registered issuer.
+    /// - [`Error::DuplicateAttestation`] — any subject would produce a duplicate ID.
+    pub fn create_attestations_batch(
+        env: Env,
+        issuer: Address,
+        subjects: Vec<Address>,
+        claim_type: String,
+        expiration: Option<u64>,
+    ) -> Result<Vec<String>, Error> {
+        // Single auth check for the entire batch
+        issuer.require_auth();
+        Validation::require_issuer(&env, &issuer)?;
+
+        let timestamp = env.ledger().timestamp();
+        let mut ids: Vec<String> = Vec::new(&env);
+
+        for subject in subjects.iter() {
+            let attestation_id = Attestation::generate_id(
+                &env,
+                &issuer,
+                &subject,
+                &claim_type,
+                timestamp,
+            );
+
+            if Storage::has_attestation(&env, &attestation_id) {
+                return Err(Error::DuplicateAttestation);
+            }
+
+            let attestation = Attestation {
+                id: attestation_id.clone(),
+                issuer: issuer.clone(),
+                subject: subject.clone(),
+                claim_type: claim_type.clone(),
+                timestamp,
+                expiration,
+                revoked: false,
+                valid_from: None,
+            };
+
+            Storage::set_attestation(&env, &attestation);
+            Storage::add_subject_attestation(&env, &subject, &attestation_id);
+            Storage::add_issuer_attestation(&env, &issuer, &attestation_id);
+            Events::attestation_created(&env, &attestation);
+
+            ids.push_back(attestation_id);
+        }
+
+        Ok(ids)
     }
 
     /// Revoke an existing attestation.
@@ -332,7 +405,7 @@ impl TrustLinkContract {
                         AttestationStatus::Expired => {
                             Events::attestation_expired(&env, &id, &subject);
                         }
-                        AttestationStatus::Revoked => {}
+                        AttestationStatus::Revoked | AttestationStatus::Pending => {}
                     }
                 }
             }

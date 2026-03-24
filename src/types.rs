@@ -9,6 +9,14 @@ pub struct ContractMetadata {
     pub description: String,
 }
 
+/// A registered claim type with its description.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ClaimTypeInfo {
+    pub claim_type: String,
+    pub description: String,
+}
+
 /// A single attestation record stored on-chain.
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -70,14 +78,11 @@ impl Attestation {
         timestamp: u64,
     ) -> String {
         use soroban_sdk::Bytes;
-        // Strkeys for account (G...) and contract (C...) addresses are always
-        // 56 ASCII characters. Copy them into fixed-size stack buffers.
         let mut issuer_buf = [0u8; 56];
         let mut subject_buf = [0u8; 56];
         issuer.to_string().copy_into_slice(&mut issuer_buf);
         subject.to_string().copy_into_slice(&mut subject_buf);
 
-        // Copy claim_type bytes into a fixed-size buffer (max 128 bytes).
         let claim_len = claim_type.len() as usize;
         let mut claim_buf = [0u8; 128];
         claim_type.copy_into_slice(&mut claim_buf[..claim_len]);
@@ -91,7 +96,6 @@ impl Attestation {
         let hash = env.crypto().sha256(&buf);
         let hash_arr = hash.to_array();
 
-        // Hex-encode the first 16 bytes → 32 ASCII characters.
         const HEX: &[u8; 16] = b"0123456789abcdef";
         let mut hex_bytes = [0u8; 32];
         for i in 0..16 {
@@ -120,12 +124,4 @@ impl Attestation {
         }
         AttestationStatus::Valid
     }
-}
-
-/// A registered claim type with its description.
-#[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ClaimTypeInfo {
-    pub claim_type: String,
-    pub description: String,
 }
