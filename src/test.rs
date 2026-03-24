@@ -1,5 +1,3 @@
-#![cfg(test)]
-
 use super::*;
 use soroban_sdk::{
     contract, contractimpl,
@@ -94,7 +92,7 @@ fn test_register_issuer_emits_event() {
 
     let events = env.events().all();
     assert!(!events.is_empty());
-    
+
     // Find the issuer_registered event
     let mut found_event = false;
     for (_, topic, data) in events {
@@ -105,7 +103,7 @@ fn test_register_issuer_emits_event() {
                 soroban_sdk::TryFromVal::try_from_val(&env, &topic.get(1).unwrap()).unwrap();
             let event_data: (Address, u64) =
                 soroban_sdk::TryFromVal::try_from_val(&env, &data).unwrap();
-            
+
             assert_eq!(topic1, issuer);
             assert_eq!(event_data.0, admin);
             assert_eq!(event_data.1, timestamp);
@@ -129,7 +127,7 @@ fn test_remove_issuer_emits_event() {
 
     let events = env.events().all();
     assert!(!events.is_empty());
-    
+
     // Find the issuer_removed event
     let mut found_event = false;
     for (_, topic, data) in events {
@@ -140,7 +138,7 @@ fn test_remove_issuer_emits_event() {
                 soroban_sdk::TryFromVal::try_from_val(&env, &topic.get(1).unwrap()).unwrap();
             let event_data: (Address, u64) =
                 soroban_sdk::TryFromVal::try_from_val(&env, &data).unwrap();
-            
+
             assert_eq!(topic1, issuer);
             assert_eq!(event_data.0, admin);
             assert_eq!(event_data.1, timestamp);

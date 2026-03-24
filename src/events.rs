@@ -94,13 +94,17 @@ impl Events {
     }
 
     pub fn issuer_registered(env: &Env, issuer: &Address, admin: &Address, timestamp: u64) {
-        env.events()
-            .publish((symbol_short!("iss_reg"), issuer.clone()), (admin.clone(), timestamp));
+        env.events().publish(
+            (symbol_short!("iss_reg"), issuer.clone()),
+            (admin.clone(), timestamp),
+        );
     }
 
     pub fn issuer_removed(env: &Env, issuer: &Address, admin: &Address, timestamp: u64) {
-        env.events()
-            .publish((symbol_short!("iss_rem"), issuer.clone()), (admin.clone(), timestamp));
+        env.events().publish(
+            (symbol_short!("iss_rem"), issuer.clone()),
+            (admin.clone(), timestamp),
+        );
     }
 
     pub fn claim_type_registered(env: &Env, claim_type: &String, description: &String) {
