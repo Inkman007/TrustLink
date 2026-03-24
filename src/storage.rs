@@ -5,13 +5,15 @@
 //! (issuers, attestations, indexes) each have their own TTL entry.
 
 use soroban_sdk::{contracttype, Address, Env, String, Vec};
-use crate::types::{Attestation, Error};
+use crate::types::{Attestation, ClaimTypeInfo, Error, IssuerMetadata};
 
 /// Keys used to address data in contract storage.
 #[contracttype]
 pub enum StorageKey {
     /// The contract administrator address.
     Admin,
+    /// Semver version string set at initialization.
+    Version,
     /// Presence flag for a registered issuer.
     Issuer(Address),
     /// Full [`Attestation`] record keyed by its ID.
@@ -20,6 +22,12 @@ pub enum StorageKey {
     SubjectAttestations(Address),
     /// Ordered list of attestation IDs created by an issuer address.
     IssuerAttestations(Address),
+    /// Optional metadata associated with a registered issuer.
+    IssuerMetadata(Address),
+    /// Info for a registered claim type.
+    ClaimType(String),
+    /// Ordered list of registered claim type identifiers.
+    ClaimTypeList,
 }
 
 const DAY_IN_LEDGERS: u32 = 17280;
@@ -41,6 +49,18 @@ impl Storage {
     pub fn set_admin(env: &Env, admin: &Address) {
         env.storage().instance().set(&StorageKey::Admin, admin);
         env.storage().instance().extend_ttl(INSTANCE_LIFETIME, INSTANCE_LIFETIME);
+    }
+
+    /// Persist `version` in instance storage alongside the admin.
+    pub fn set_version(env: &Env, version: &String) {
+        env.storage().instance().set(&StorageKey::Version, version);
+    }
+
+    /// Retrieve the contract version string.
+    ///
+    /// Returns `None` if the contract has not been initialized yet.
+    pub fn get_version(env: &Env) -> Option<String> {
+        env.storage().instance().get(&StorageKey::Version)
     }
 
     /// Retrieve the admin address.
@@ -128,5 +148,52 @@ impl Storage {
         attestations.push_back(attestation_id.clone());
         env.storage().persistent().set(&key, &attestations);
         env.storage().persistent().extend_ttl(&key, INSTANCE_LIFETIME, INSTANCE_LIFETIME);
+    }
+
+    /// Persist `metadata` for `issuer` and refresh its TTL.
+    pub fn set_issuer_metadata(env: &Env, issuer: &Address, metadata: &IssuerMetadata) {
+        let key = StorageKey::IssuerMetadata(issuer.clone());
+        env.storage().persistent().set(&key, metadata);
+        env.storage().persistent().extend_ttl(&key, INSTANCE_LIFETIME, INSTANCE_LIFETIME);
+    }
+
+    /// Retrieve metadata for `issuer`, or `None` if not set.
+    pub fn get_issuer_metadata(env: &Env, issuer: &Address) -> Option<IssuerMetadata> {
+        env.storage()
+            .persistent()
+            .get(&StorageKey::IssuerMetadata(issuer.clone()))
+    }
+
+    /// Persist a claim type info record and add it to the ordered list if new.
+    pub fn set_claim_type(env: &Env, info: &ClaimTypeInfo) {
+        let key = StorageKey::ClaimType(info.claim_type.clone());
+        let is_new = !env.storage().persistent().has(&key);
+        env.storage().persistent().set(&key, info);
+        env.storage().persistent().extend_ttl(&key, INSTANCE_LIFETIME, INSTANCE_LIFETIME);
+        if is_new {
+            let list_key = StorageKey::ClaimTypeList;
+            let mut list: Vec<String> = env.storage()
+                .persistent()
+                .get(&list_key)
+                .unwrap_or(Vec::new(env));
+            list.push_back(info.claim_type.clone());
+            env.storage().persistent().set(&list_key, &list);
+            env.storage().persistent().extend_ttl(&list_key, INSTANCE_LIFETIME, INSTANCE_LIFETIME);
+        }
+    }
+
+    /// Retrieve a claim type info record, or `None` if not registered.
+    pub fn get_claim_type(env: &Env, claim_type: &String) -> Option<ClaimTypeInfo> {
+        env.storage()
+            .persistent()
+            .get(&StorageKey::ClaimType(claim_type.clone()))
+    }
+
+    /// Return the ordered list of registered claim type identifiers.
+    pub fn get_claim_type_list(env: &Env) -> Vec<String> {
+        env.storage()
+            .persistent()
+            .get(&StorageKey::ClaimTypeList)
+            .unwrap_or(Vec::new(env))
     }
 }
