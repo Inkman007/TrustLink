@@ -1,3 +1,4 @@
+
 # ─────────────────────────────────────────────────────────────────────────────
 # TrustLink Makefile
 # ─────────────────────────────────────────────────────────────────────────────
@@ -110,10 +111,12 @@ install:
 	@echo "  Stellar CLI: cargo install --locked stellar-cli --features opt"
 	@echo "  WASM target: rustup target add wasm32-unknown-unknown"
 
+## Build the contract in debug mode
 build:
 	@echo "Building TrustLink ($(NETWORK))..."
 	cargo build --target wasm32-unknown-unknown --release
 
+## Run all unit tests
 test:
 	@echo "Running tests..."
 	cargo test
@@ -123,14 +126,17 @@ optimize: build
 	stellar contract optimize --wasm $(WASM)
 	@echo "Optimized artifact: $(WASM_OPT)"
 
+## Clean build artifacts and compiled outputs
 clean:
 	@echo "Cleaning build artifacts..."
 	cargo clean
 
+## Format code according to Rust standards
 fmt:
 	@echo "Formatting code..."
 	cargo fmt
 
+## Run clippy linter and enforce strict warnings
 clippy:
 	@echo "Running clippy..."
 	cargo clippy --all-targets -- -D warnings
