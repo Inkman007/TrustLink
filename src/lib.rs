@@ -206,7 +206,15 @@ impl TrustLinkContract {
         Ok(())
     }
 
-    pub fn register_issuer(env: Env, admin: Address, issuer: Address, tier: Option<IssuerTier>) -> Result<(), Error> {
+    pub fn transfer_admin(env: Env, current_admin: Address, new_admin: Address) -> Result<(), Error> {
+        current_admin.require_auth();
+        Validation::require_admin(&env, &current_admin)?;
+        Storage::set_admin(&env, &new_admin);
+        Events::admin_transferred(&env, &current_admin, &new_admin);
+        Ok(())
+    }
+
+    pub fn register_issuer(env: Env, admin: Address, issuer: Address) -> Result<(), Error> {
         admin.require_auth();
         Validation::require_admin(&env, &admin)?;
         let timestamp = env.ledger().timestamp();
