@@ -229,6 +229,13 @@ let has_kyc = contract.has_valid_claim(
 if has_kyc {
     // Proceed with financial operation
 }
+
+// Check if user has valid KYC from a specific issuer
+let has_specific_kyc = contract.has_valid_claim_from_issuer(
+    &user_address,
+    &String::from_str(&env, "KYC_PASSED"),
+    &specific_issuer_address
+);
 ```
 
 ### Verify Any of Multiple Claims

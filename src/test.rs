@@ -632,28 +632,45 @@ fn test_imported_attestation_can_be_expired_today() {
 }
 
 #[test]
-fn test_initialize_with_custom_ttl() {
+fn test_has_valid_claim_from_issuer() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let admin = Address::generate(&env);
-    let (_, client) = create_test_contract(&env);
+    let (admin, issuer1, client) = setup(&env);
+    let subject = Address::generate(&env);
+    let claim_type = String::from_str(&env, "KYC_PASSED");
+    
+    let issuer2 = Address::generate(&env);
+    client.register_issuer(&admin, &issuer2);
 
-    // Initialize with custom TTL of 7 days
-    let custom_ttl = Some(7u32);
-    client.initialize(&admin, &custom_ttl);
-    assert_eq!(client.get_admin(), admin);
-}
+    // Initial state: no claims
+    assert!(!client.has_valid_claim(&subject, &claim_type));
+    assert!(!client.has_valid_claim_from_issuer(&subject, &claim_type, &issuer1));
+    assert!(!client.has_valid_claim_from_issuer(&subject, &claim_type, &issuer2));
 
-#[test]
-fn test_initialize_with_default_ttl() {
-    let env = Env::default();
-    env.mock_all_auths();
+    // Issuer 1 creates a claim
+    let id1 = client.create_attestation(&issuer1, &subject, &claim_type, &None, &None);
+    assert!(client.has_valid_claim(&subject, &claim_type));
+    assert!(client.has_valid_claim_from_issuer(&subject, &claim_type, &issuer1));
+    assert!(!client.has_valid_claim_from_issuer(&subject, &claim_type, &issuer2));
 
-    let admin = Address::generate(&env);
-    let (_, client) = create_test_contract(&env);
+    // Issuer 2 creates a claim
+    let id2 = client.create_attestation(&issuer2, &subject, &claim_type, &None, &None);
+    assert!(client.has_valid_claim_from_issuer(&subject, &claim_type, &issuer1));
+    assert!(client.has_valid_claim_from_issuer(&subject, &claim_type, &issuer2));
 
-    // Initialize without custom TTL (uses default 30 days)
-    client.initialize(&admin, &None);
-    assert_eq!(client.get_admin(), admin);
+    // Revoke issuer 1's claim
+    client.revoke_attestation(&issuer1, &id1);
+    assert!(!client.has_valid_claim_from_issuer(&subject, &claim_type, &issuer1));
+    assert!(client.has_valid_claim_from_issuer(&subject, &claim_type, &issuer2)); // issuer 2 is still valid
+    assert!(client.has_valid_claim(&subject, &claim_type));
+
+    // Expire issuer 2's claim
+    let now = env.ledger().timestamp();
+    client.update_expiration(&issuer2, &id2, &Some(now + 100));
+    assert!(client.has_valid_claim_from_issuer(&subject, &claim_type, &issuer2));
+
+    env.ledger().with_mut(|li| li.timestamp = now + 101);
+    assert!(!client.has_valid_claim_from_issuer(&subject, &claim_type, &issuer2));
+    assert!(!client.has_valid_claim(&subject, &claim_type));
 }

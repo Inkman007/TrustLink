@@ -498,6 +498,32 @@ impl TrustLinkContract {
         false
     }
 
+    pub fn has_valid_claim_from_issuer(
+        env: Env,
+        subject: Address,
+        claim_type: String,
+        issuer: Address,
+    ) -> bool {
+        let attestation_ids = Storage::get_subject_attestations(&env, &subject);
+        let current_time = env.ledger().timestamp();
+
+        for attestation_id in attestation_ids.iter() {
+            if let Ok(attestation) = Storage::get_attestation(&env, &attestation_id) {
+                if attestation.claim_type == claim_type && attestation.issuer == issuer {
+                    match attestation.get_status(current_time) {
+                        AttestationStatus::Valid => return true,
+                        AttestationStatus::Expired => {
+                            Events::attestation_expired(&env, &attestation_id, &subject);
+                        }
+                        AttestationStatus::Revoked | AttestationStatus::Pending => {}
+                    }
+                }
+            }
+        }
+
+        false
+    }
+
     pub fn has_any_claim(env: Env, subject: Address, claim_types: Vec<String>) -> bool {
         if claim_types.is_empty() {
             return false;
