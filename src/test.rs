@@ -979,366 +979,10 @@ fn test_multisig_unregistered_proposer_rejected() {
     assert_eq!(result, Err(Ok(types::Error::Unauthorized)));
 }
 
-// ── Expiration hook tests ─────────────────────────────────────────────────────
-
-/// A minimal mock callback contract that records calls via storage.
-#[contract]
-struct MockCallbackContract;
-
-#[contractimpl]
-impl MockCallbackContract {
-    pub fn notify_expiring(env: Env, _subject: Address, _attestation_id: String, _expiration: u64) {
-        // Record that we were called by incrementing a counter in instance storage.
-        let count: u32 = env.storage().instance().get(&soroban_sdk::symbol_short!("calls")).unwrap_or(0);
-        env.storage().instance().set(&soroban_sdk::symbol_short!("calls"), &(count + 1));
-    }
-
-    pub fn call_count(env: Env) -> u32 {
-        env.storage().instance().get(&soroban_sdk::symbol_short!("calls")).unwrap_or(0)
-    }
-}
-
-fn register_callback_contract(env: &Env) -> (Address, MockCallbackContractClient<'_>) {
-    let id = env.register_contract(None, MockCallbackContract);
-    let client = MockCallbackContractClient::new(env, &id);
-    (id, client)
-}
+// ── Attestation proof tests ──────────────────────────────────────────────────
 
 #[test]
-fn test_register_and_get_expiration_hook() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let (_, _, client) = setup(&env);
-    let subject = Address::generate(&env);
-    let (callback_id, _) = register_callback_contract(&env);
-
-    client.register_expiration_hook(&subject, &callback_id, &7);
-
-    let hook = client.get_expiration_hook(&subject).unwrap();
-    assert_eq!(hook.subject, subject);
-    assert_eq!(hook.callback_contract, callback_id);
-    assert_eq!(hook.notify_days_before, 7);
-}
-
-#[test]
-fn test_remove_expiration_hook() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let (_, _, client) = setup(&env);
-    let subject = Address::generate(&env);
-    let (callback_id, _) = register_callback_contract(&env);
-
-    client.register_expiration_hook(&subject, &callback_id, &7);
-    assert!(client.get_expiration_hook(&subject).is_some());
-
-    client.remove_expiration_hook(&subject);
-    assert!(client.get_expiration_hook(&subject).is_none());
-}
-
-#[test]
-fn test_hook_triggered_when_inside_notification_window() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let (_, issuer, client) = setup(&env);
-    let subject = Address::generate(&env);
-    let claim_type = String::from_str(&env, "KYC_PASSED");
-    let (callback_id, callback_client) = register_callback_contract(&env);
-
-    // Attestation expires in 10 days from t=0.
-    let expiration = 10 * 86_400u64;
-    env.ledger().with_mut(|li| li.timestamp = 0);
-    client.create_attestation(&issuer, &subject, &claim_type, &Some(expiration), &None, &None);
-
-    // Register hook: notify 7 days before expiry → window starts at day 3.
-    client.register_expiration_hook(&subject, &callback_id, &7);
-
-    // At day 2 — outside window, no call.
-    env.ledger().with_mut(|li| li.timestamp = 2 * 86_400);
-    client.has_valid_claim(&subject, &claim_type);
-    assert_eq!(callback_client.call_count(), 0);
-
-    // At day 4 — inside window (day 3..10), hook fires.
-    env.ledger().with_mut(|li| li.timestamp = 4 * 86_400);
-    let valid = client.has_valid_claim(&subject, &claim_type);
-    assert!(valid);
-    assert_eq!(callback_client.call_count(), 1);
-}
-
-#[test]
-fn test_hook_not_triggered_outside_notification_window() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let (_, issuer, client) = setup(&env);
-    let subject = Address::generate(&env);
-    let claim_type = String::from_str(&env, "KYC_PASSED");
-    let (callback_id, callback_client) = register_callback_contract(&env);
-
-    let expiration = 10 * 86_400u64;
-    env.ledger().with_mut(|li| li.timestamp = 0);
-    client.create_attestation(&issuer, &subject, &claim_type, &Some(expiration), &None, &None);
-    client.register_expiration_hook(&subject, &callback_id, &3);
-
-    // At day 5 — outside the 3-day window (window starts day 7).
-    env.ledger().with_mut(|li| li.timestamp = 5 * 86_400);
-    client.has_valid_claim(&subject, &claim_type);
-    assert_eq!(callback_client.call_count(), 0);
-}
-
-#[test]
-fn test_hook_not_triggered_for_attestation_without_expiration() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let (_, issuer, client) = setup(&env);
-    let subject = Address::generate(&env);
-    let claim_type = String::from_str(&env, "KYC_PASSED");
-    let (callback_id, callback_client) = register_callback_contract(&env);
-
-    // No expiration set.
-    client.create_attestation(&issuer, &subject, &claim_type, &None, &None, &None);
-    client.register_expiration_hook(&subject, &callback_id, &7);
-
-    client.has_valid_claim(&subject, &claim_type);
-    assert_eq!(callback_client.call_count(), 0);
-}
-
-#[test]
-fn test_hook_not_triggered_after_removal() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let (_, issuer, client) = setup(&env);
-    let subject = Address::generate(&env);
-    let claim_type = String::from_str(&env, "KYC_PASSED");
-    let (callback_id, callback_client) = register_callback_contract(&env);
-
-    let expiration = 10 * 86_400u64;
-    env.ledger().with_mut(|li| li.timestamp = 0);
-    client.create_attestation(&issuer, &subject, &claim_type, &Some(expiration), &None, &None);
-    client.register_expiration_hook(&subject, &callback_id, &7);
-
-    // Remove the hook before entering the window.
-    client.remove_expiration_hook(&subject);
-
-    env.ledger().with_mut(|li| li.timestamp = 4 * 86_400);
-    client.has_valid_claim(&subject, &claim_type);
-    assert_eq!(callback_client.call_count(), 0);
-}
-
-#[test]
-fn test_hook_emits_exp_hook_event() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let (_, issuer, client) = setup(&env);
-    let subject = Address::generate(&env);
-    let claim_type = String::from_str(&env, "KYC_PASSED");
-    let (callback_id, _) = register_callback_contract(&env);
-
-    let expiration = 10 * 86_400u64;
-    env.ledger().with_mut(|li| li.timestamp = 0);
-    client.create_attestation(&issuer, &subject, &claim_type, &Some(expiration), &None, &None);
-    client.register_expiration_hook(&subject, &callback_id, &7);
-
-    env.ledger().with_mut(|li| li.timestamp = 4 * 86_400);
-    client.has_valid_claim(&subject, &claim_type);
-
-    let events = env.events().all();
-    let mut found = false;
-    for (_, topics, _) in events.iter() {
-        let topic0: soroban_sdk::Symbol =
-            soroban_sdk::TryFromVal::try_from_val(&env, &topics.get(0).unwrap()).unwrap();
-        if topic0 == soroban_sdk::symbol_short!("exp_hook") {
-            found = true;
-            break;
-        }
-    }
-    assert!(found, "exp_hook event not found");
-}
-
-#[test]
-fn test_hook_overwrite_replaces_previous() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let (_, _, client) = setup(&env);
-    let subject = Address::generate(&env);
-    let (callback_id1, _) = register_callback_contract(&env);
-    let (callback_id2, _) = register_callback_contract(&env);
-
-    client.register_expiration_hook(&subject, &callback_id1, &5);
-    client.register_expiration_hook(&subject, &callback_id2, &10);
-
-    let hook = client.get_expiration_hook(&subject).unwrap();
-    assert_eq!(hook.callback_contract, callback_id2);
-    assert_eq!(hook.notify_days_before, 10);
-}
-
-// ── Issuer tier tests ─────────────────────────────────────────────────────────
-
-#[test]
-fn test_register_issuer_defaults_to_bronze() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let (_, client) = create_test_contract(&env);
-    let admin = Address::generate(&env);
-    let issuer = Address::generate(&env);
-    client.initialize(&admin, &None);
-
-    // No tier supplied → defaults to Bronze.
-    client.register_issuer(&admin, &issuer, &None);
-    assert_eq!(client.get_issuer_tier(&issuer), Some(types::IssuerTier::Bronze));
-}
-
-#[test]
-fn test_register_issuer_with_explicit_tier() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let (_, client) = create_test_contract(&env);
-    let admin = Address::generate(&env);
-    let issuer = Address::generate(&env);
-    client.initialize(&admin, &None);
-
-    client.register_issuer(&admin, &issuer, &Some(types::IssuerTier::Gold));
-    assert_eq!(client.get_issuer_tier(&issuer), Some(types::IssuerTier::Gold));
-}
-
-#[test]
-fn test_admin_can_update_issuer_tier() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let (admin, issuer, client) = setup(&env);
-
-    client.update_issuer_tier(&admin, &issuer, &types::IssuerTier::Silver);
-    assert_eq!(client.get_issuer_tier(&issuer), Some(types::IssuerTier::Silver));
-
-    client.update_issuer_tier(&admin, &issuer, &types::IssuerTier::Gold);
-    assert_eq!(client.get_issuer_tier(&issuer), Some(types::IssuerTier::Gold));
-}
-
-#[test]
-fn test_update_tier_requires_admin() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let (_, issuer, client) = setup(&env);
-    let not_admin = Address::generate(&env);
-
-    let result = client.try_update_issuer_tier(&not_admin, &issuer, &types::IssuerTier::Gold);
-    assert_eq!(result, Err(Ok(types::Error::Unauthorized)));
-}
-
-#[test]
-fn test_update_tier_requires_registered_issuer() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let (admin, _, client) = setup(&env);
-    let unregistered = Address::generate(&env);
-
-    let result = client.try_update_issuer_tier(&admin, &unregistered, &types::IssuerTier::Gold);
-    assert_eq!(result, Err(Ok(types::Error::Unauthorized)));
-}
-
-#[test]
-fn test_get_issuer_tier_returns_none_for_unknown() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let (_, _, client) = setup(&env);
-    let unknown = Address::generate(&env);
-
-    assert_eq!(client.get_issuer_tier(&unknown), None);
-}
-
-#[test]
-fn test_has_valid_claim_from_tier_gold_issuer_satisfies_all_tiers() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let (admin, issuer, client) = setup(&env);
-    let subject = Address::generate(&env);
-    let claim_type = String::from_str(&env, "KYC_PASSED");
-
-    client.update_issuer_tier(&admin, &issuer, &types::IssuerTier::Gold);
-    client.create_attestation(&issuer, &subject, &claim_type, &None, &None, &None);
-
-    // Gold satisfies Bronze, Silver, and Gold minimum.
-    assert!(client.has_valid_claim_from_tier(&subject, &claim_type, &types::IssuerTier::Bronze));
-    assert!(client.has_valid_claim_from_tier(&subject, &claim_type, &types::IssuerTier::Silver));
-    assert!(client.has_valid_claim_from_tier(&subject, &claim_type, &types::IssuerTier::Gold));
-}
-
-#[test]
-fn test_has_valid_claim_from_tier_bronze_issuer_fails_silver_and_gold() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let (_, issuer, client) = setup(&env); // setup registers with Bronze by default
-    let subject = Address::generate(&env);
-    let claim_type = String::from_str(&env, "KYC_PASSED");
-
-    client.create_attestation(&issuer, &subject, &claim_type, &None, &None, &None);
-
-    assert!(client.has_valid_claim_from_tier(&subject, &claim_type, &types::IssuerTier::Bronze));
-    assert!(!client.has_valid_claim_from_tier(&subject, &claim_type, &types::IssuerTier::Silver));
-    assert!(!client.has_valid_claim_from_tier(&subject, &claim_type, &types::IssuerTier::Gold));
-}
-
-#[test]
-fn test_has_valid_claim_from_tier_picks_highest_tier_issuer() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let (admin, issuer_bronze, client) = setup(&env);
-    let issuer_gold = Address::generate(&env);
-    client.register_issuer(&admin, &issuer_gold, &Some(types::IssuerTier::Gold));
-
-    let subject = Address::generate(&env);
-    let claim_type = String::from_str(&env, "KYC_PASSED");
-
-    // Bronze issuer attests at t=0, Gold issuer attests at t=1.
-    env.ledger().with_mut(|li| li.timestamp = 0);
-    client.create_attestation(&issuer_bronze, &subject, &claim_type, &None, &None, &None);
-    env.ledger().with_mut(|li| li.timestamp = 1);
-    client.create_attestation(&issuer_gold, &subject, &claim_type, &None, &None, &None);
-
-    // Gold min_tier satisfied because gold issuer has an attestation.
-    assert!(client.has_valid_claim_from_tier(&subject, &claim_type, &types::IssuerTier::Gold));
-}
-
-#[test]
-fn test_tier_update_emits_event() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let (admin, issuer, client) = setup(&env);
-    client.update_issuer_tier(&admin, &issuer, &types::IssuerTier::Silver);
-
-    let events = env.events().all();
-    let mut found = false;
-    for (_, topics, _) in events.iter() {
-        let topic0: soroban_sdk::Symbol =
-            soroban_sdk::TryFromVal::try_from_val(&env, &topics.get(0).unwrap()).unwrap();
-        if topic0 == soroban_sdk::symbol_short!("iss_tier") {
-            found = true;
-            break;
-        }
-    }
-    assert!(found, "iss_tier event not found");
-}
-
-// ── TTL-on-read tests ─────────────────────────────────────────────────────────
-
-#[test]
-fn test_read_attestation_extends_ttl() {
+fn test_get_attestation_proof_returns_correct_attestation_data() {
     let env = Env::default();
     env.mock_all_auths();
 
@@ -1346,18 +990,21 @@ fn test_read_attestation_extends_ttl() {
     let subject = Address::generate(&env);
     let claim_type = String::from_str(&env, "KYC_PASSED");
 
+    env.ledger().with_mut(|li| li.timestamp = 1_000);
     let id = client.create_attestation(&issuer, &subject, &claim_type, &None, &None, &None);
 
-    // Reading the attestation should not panic and should return the record.
-    // The TTL extension itself is verified implicitly — if extend_ttl were
-    // called with an invalid key the SDK would panic in the test environment.
-    let attestation = client.get_attestation(&id);
-    assert_eq!(attestation.id, id);
-    assert_eq!(attestation.issuer, issuer);
+    let proof = client.get_attestation_proof(&id);
+
+    assert_eq!(proof.attestation.id, id);
+    assert_eq!(proof.attestation.issuer, issuer);
+    assert_eq!(proof.attestation.subject, subject);
+    assert_eq!(proof.attestation.claim_type, claim_type);
+    assert_eq!(proof.attestation.timestamp, 1_000);
+    assert!(!proof.attestation.revoked);
 }
 
 #[test]
-fn test_read_subject_attestations_extends_ttl() {
+fn test_get_attestation_proof_includes_ledger_context() {
     let env = Env::default();
     env.mock_all_auths();
 
@@ -1365,37 +1012,78 @@ fn test_read_subject_attestations_extends_ttl() {
     let subject = Address::generate(&env);
     let claim_type = String::from_str(&env, "KYC_PASSED");
 
-    client.create_attestation(&issuer, &subject, &claim_type, &None, &None, &None);
+    env.ledger().with_mut(|li| {
+        li.sequence_number = 42;
+        li.timestamp = 5_000;
+    });
+    let id = client.create_attestation(&issuer, &subject, &claim_type, &None, &None, &None);
 
-    // Reading the index should succeed and return the stored IDs.
-    let ids = client.get_subject_attestations(&subject, &0, &10);
-    assert_eq!(ids.len(), 1);
+    let proof = client.get_attestation_proof(&id);
+
+    assert_eq!(proof.ledger_sequence, 42);
+    assert_eq!(proof.ledger_timestamp, 5_000);
+    // ledger_hash is a 32-byte hex string (64 chars)
+    assert_eq!(proof.ledger_hash.len(), 64);
 }
 
 #[test]
-fn test_read_issuer_attestations_extends_ttl() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let (_, issuer, client) = setup(&env);
-    let subject = Address::generate(&env);
-    let claim_type = String::from_str(&env, "KYC_PASSED");
-
-    client.create_attestation(&issuer, &subject, &claim_type, &None, &None, &None);
-
-    let ids = client.get_issuer_attestations(&issuer, &0, &10);
-    assert_eq!(ids.len(), 1);
-}
-
-#[test]
-fn test_empty_subject_index_does_not_panic_on_read() {
+fn test_get_attestation_proof_not_found_returns_error() {
     let env = Env::default();
     env.mock_all_auths();
 
     let (_, _, client) = setup(&env);
-    let subject = Address::generate(&env);
+    let missing_id = String::from_str(&env, "nonexistent_id");
 
-    // No attestations exist — should return empty vec without panicking.
-    let ids = client.get_subject_attestations(&subject, &0, &10);
-    assert_eq!(ids.len(), 0);
+    let result = client.try_get_attestation_proof(&missing_id);
+    assert_eq!(result, Err(Ok(types::Error::NotFound)));
+}
+
+#[test]
+fn test_get_attestation_proof_ledger_hash_is_deterministic() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, issuer, client) = setup(&env);
+    let subject = Address::generate(&env);
+    let claim_type = String::from_str(&env, "KYC_PASSED");
+
+    env.ledger().with_mut(|li| {
+        li.sequence_number = 100;
+        li.timestamp = 9_000;
+    });
+    let id = client.create_attestation(&issuer, &subject, &claim_type, &None, &None, &None);
+
+    let proof1 = client.get_attestation_proof(&id);
+    let proof2 = client.get_attestation_proof(&id);
+
+    // Same ledger state → same hash
+    assert_eq!(proof1.ledger_hash, proof2.ledger_hash);
+}
+
+#[test]
+fn test_get_attestation_proof_hash_changes_with_ledger() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, issuer, client) = setup(&env);
+    let subject = Address::generate(&env);
+    let claim_type = String::from_str(&env, "KYC_PASSED");
+
+    env.ledger().with_mut(|li| {
+        li.sequence_number = 10;
+        li.timestamp = 1_000;
+    });
+    let id = client.create_attestation(&issuer, &subject, &claim_type, &None, &None, &None);
+
+    let proof_early = client.get_attestation_proof(&id);
+
+    env.ledger().with_mut(|li| {
+        li.sequence_number = 20;
+        li.timestamp = 2_000;
+    });
+    let proof_later = client.get_attestation_proof(&id);
+
+    // Different ledger state → different hash
+    assert_ne!(proof_early.ledger_hash, proof_later.ledger_hash);
+    assert_ne!(proof_early.ledger_sequence, proof_later.ledger_sequence);
 }

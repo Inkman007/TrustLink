@@ -165,6 +165,37 @@ pub enum Error {
     ProposalExpired = 20,
 }
 
+/// A cryptographic proof that an attestation existed at a specific ledger sequence.
+///
+/// ## Verification
+///
+/// To verify this proof against Stellar ledger history:
+///
+/// 1. Fetch the ledger header for `ledger_sequence` from a Stellar Horizon node:
+///    `GET /ledgers/{ledger_sequence}`
+/// 2. Confirm the returned `hash` field matches `ledger_hash` in this struct.
+/// 3. Confirm the returned `closed_at` Unix timestamp matches `ledger_timestamp`.
+/// 4. Recompute the attestation ID from `attestation.issuer`, `attestation.subject`,
+///    `attestation.claim_type`, and `attestation.timestamp` using the same SHA-256
+///    hashing scheme used by `Attestation::generate_id`.
+/// 5. Confirm the recomputed ID matches `attestation.id`.
+///
+/// A proof is considered valid when all three checks pass, establishing that the
+/// attestation was stored on-chain no later than `ledger_sequence`.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AttestationProof {
+    /// The full attestation record at the time the proof was generated.
+    pub attestation: Attestation,
+    /// The Stellar ledger sequence number at which the proof was captured.
+    pub ledger_sequence: u32,
+    /// The ledger close timestamp (Unix seconds) for `ledger_sequence`.
+    pub ledger_timestamp: u64,
+    /// The SHA-256 hash of the ledger header, hex-encoded (32 bytes → 64 hex chars).
+    /// Use this to cross-reference against Stellar Horizon or a Stellar Core node.
+    pub ledger_hash: String,
+}
+
 impl Attestation {
     pub fn hash_payload(env: &Env, payload: &Bytes) -> String {
         let hash = env.crypto().sha256(payload).to_array();

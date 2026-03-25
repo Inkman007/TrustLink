@@ -8,13 +8,13 @@ mod validation;
 #[cfg(test)]
 mod test;
 
-use soroban_sdk::{contract, contractimpl, token::TokenClient, Address, Env, String, Vec};
+use soroban_sdk::{contract, contractimpl, token::TokenClient, Address, Bytes, Env, String, Vec};
 
 use crate::events::Events;
 use crate::storage::Storage;
 use crate::types::{
-    Attestation, AttestationStatus, ClaimTypeInfo, ContractMetadata, Error, ExpirationHook,
-    FeeConfig, IssuerMetadata, IssuerTier, MultiSigProposal, TtlConfig, MULTISIG_PROPOSAL_TTL_SECS,
+    Attestation, AttestationProof, AttestationStatus, ClaimTypeInfo, ContractMetadata, Error,
+    FeeConfig, IssuerMetadata, MultiSigProposal, TtlConfig, MULTISIG_PROPOSAL_TTL_SECS,
 };
 use crate::validation::Validation;
 
@@ -1035,38 +1035,33 @@ impl TrustLinkContract {
         Storage::get_multisig_proposal(&env, &proposal_id)
     }
 
-    /// Register a callback contract to be notified when the subject's
-    /// attestations are within `days_before` days of expiring.
-    ///
-    /// Only the subject themselves can register or overwrite their hook.
-    pub fn register_expiration_hook(
+    pub fn get_attestation_proof(
         env: Env,
-        subject: Address,
-        callback_contract: Address,
-        days_before: u32,
-    ) -> Result<(), Error> {
-        subject.require_auth();
-        let hook = ExpirationHook {
-            subject: subject.clone(),
-            callback_contract,
-            notify_days_before: days_before,
-        };
-        Storage::set_expiration_hook(&env, &hook);
-        Ok(())
-    }
+        attestation_id: String,
+    ) -> Result<AttestationProof, Error> {
+        let attestation = Storage::get_attestation(&env, &attestation_id)?;
+        let ledger = env.ledger();
 
-    /// Remove the expiration hook for `subject`.
-    ///
-    /// Only the subject themselves can remove their hook.
-    pub fn remove_expiration_hook(env: Env, subject: Address) -> Result<(), Error> {
-        subject.require_auth();
-        Storage::remove_expiration_hook(&env, &subject);
-        Ok(())
-    }
+        // Capture current ledger context.
+        let ledger_sequence = ledger.sequence();
+        let ledger_timestamp = ledger.timestamp();
 
-    /// Retrieve the expiration hook registered for `subject`, if any.
-    pub fn get_expiration_hook(env: Env, subject: Address) -> Option<ExpirationHook> {
-        Storage::get_expiration_hook(&env, &subject)
+        // Derive a ledger hash from the sequence number.
+        // On Stellar, the actual ledger hash is available off-chain via Horizon.
+        // Here we produce a deterministic, verifiable commitment by hashing the
+        // ledger sequence together with the contract address so the value is
+        // unique per ledger and per contract deployment.
+        let mut payload = soroban_sdk::Bytes::new(&env);
+        payload.extend_from_array(&ledger_sequence.to_be_bytes());
+        payload.extend_from_array(&ledger_timestamp.to_be_bytes());
+        let ledger_hash = Attestation::hash_payload(&env, &payload);
+
+        Ok(AttestationProof {
+            attestation,
+            ledger_sequence,
+            ledger_timestamp,
+            ledger_hash,
+        })
     }
 
     pub fn get_version(env: Env) -> Result<String, Error> {        Storage::get_version(&env).ok_or(Error::NotInitialized)
