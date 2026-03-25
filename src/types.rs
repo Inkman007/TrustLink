@@ -70,6 +70,45 @@ pub enum AttestationStatus {
     Pending,
 }
 
+/// Trust tier assigned to a registered issuer.
+///
+/// Consumers can filter attestations by minimum tier using
+/// `has_valid_claim_from_tier`. Tiers are ordered: Bronze < Silver < Gold.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum IssuerTier {
+    Bronze,
+    Silver,
+    Gold,
+}
+
+impl IssuerTier {
+    /// Returns a numeric rank so tiers can be compared ordinally.
+    pub fn rank(&self) -> u32 {
+        match self {
+            IssuerTier::Bronze => 1,
+            IssuerTier::Silver => 2,
+            IssuerTier::Gold => 3,
+        }
+    }
+}
+
+/// Registered callback for expiration notifications.
+///
+/// When a subject's attestation enters the notification window
+/// (`expiration - notify_days_before * 86400 <= current_time < expiration`),
+/// TrustLink calls `notify_expiring` on `callback_contract`.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ExpirationHook {
+    /// The subject whose attestations are monitored.
+    pub subject: Address,
+    /// Contract to call when an attestation is near expiry.
+    pub callback_contract: Address,
+    /// How many days before expiration to trigger the notification.
+    pub notify_days_before: u32,
+}
+
 /// A multi-sig attestation proposal that becomes active once `threshold` issuers have co-signed.
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
