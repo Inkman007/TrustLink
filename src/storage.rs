@@ -7,7 +7,7 @@
 //!
 //! | Tier         | Keys stored                          | TTL policy                        |
 //! |--------------|--------------------------------------|-----------------------------------|
-//! | Instance     | `Admin`, `Version`, `FeeConfig`      | Refreshed to 30 days on each write|
+//! | Instance     | `Admin`, `Version`, `FeeConfig`, `GlobalStats` | Refreshed to 30 days on each write|
 //! | Persistent   | Everything else (see [`StorageKey`]) | Refreshed to 30 days on each write|
 //!
 //! ## Key layout (`StorageKey`)
@@ -26,8 +26,9 @@
 //! - `ClaimTypeList` — ordered `Vec<String>` of all registered claim type IDs;
 //!   used for pagination via `list_claim_types`.
 //! - `FeeConfig` — global attestation fee settings.
+//! - `GlobalStats` — running counters for total attestations, revocations, and issuers.
 
-use crate::types::{Attestation, ClaimTypeInfo, Endorsement, Error, FeeConfig, IssuerMetadata, MultiSigProposal, TtlConfig};
+use crate::types::{Attestation, ClaimTypeInfo, Endorsement, Error, FeeConfig, GlobalStats, IssuerMetadata, MultiSigProposal, TtlConfig};
 use soroban_sdk::{contracttype, Address, Env, String, Vec};
 
 /// Keys used to address data in contract storage.
@@ -61,6 +62,8 @@ pub enum StorageKey {
     MultiSigProposal(String),
     /// Ordered list of endorsements for an attestation, keyed by attestation ID.
     Endorsements(String),
+    /// Global contract statistics (total attestations, revocations, issuers).
+    GlobalStats,
 }
 
 const DAY_IN_LEDGERS: u32 = 17280;
@@ -341,5 +344,54 @@ impl Storage {
         endorsements.push_back(endorsement.clone());
         env.storage().persistent().set(&key, &endorsements);
         env.storage().persistent().extend_ttl(&key, ttl, ttl);
+    }
+
+    /// Retrieve the global contract statistics, returning zeroed defaults if not yet set.
+    pub fn get_global_stats(env: &Env) -> GlobalStats {
+        env.storage()
+            .instance()
+            .get(&StorageKey::GlobalStats)
+            .unwrap_or(GlobalStats {
+                total_attestations: 0,
+                total_revocations: 0,
+                total_issuers: 0,
+            })
+    }
+
+    /// Persist updated global stats to instance storage and refresh TTL.
+    fn set_global_stats(env: &Env, stats: &GlobalStats) {
+        let ttl = get_ttl_lifetime(env);
+        env.storage()
+            .instance()
+            .set(&StorageKey::GlobalStats, stats);
+        env.storage().instance().extend_ttl(ttl, ttl);
+    }
+
+    /// Increment `total_attestations` by `count`.
+    pub fn increment_total_attestations(env: &Env, count: u64) {
+        let mut stats = Self::get_global_stats(env);
+        stats.total_attestations += count;
+        Self::set_global_stats(env, &stats);
+    }
+
+    /// Increment `total_revocations` by `count`.
+    pub fn increment_total_revocations(env: &Env, count: u64) {
+        let mut stats = Self::get_global_stats(env);
+        stats.total_revocations += count;
+        Self::set_global_stats(env, &stats);
+    }
+
+    /// Increment `total_issuers` by 1 when a new issuer is registered.
+    pub fn increment_total_issuers(env: &Env) {
+        let mut stats = Self::get_global_stats(env);
+        stats.total_issuers += 1;
+        Self::set_global_stats(env, &stats);
+    }
+
+    /// Decrement `total_issuers` by 1 when an issuer is removed (saturating at 0).
+    pub fn decrement_total_issuers(env: &Env) {
+        let mut stats = Self::get_global_stats(env);
+        stats.total_issuers = stats.total_issuers.saturating_sub(1);
+        Self::set_global_stats(env, &stats);
     }
 }

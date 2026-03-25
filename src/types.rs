@@ -42,6 +42,20 @@ pub struct TtlConfig {
     pub ttl_days: u32,
 }
 
+/// Global contract statistics for dashboards and analytics.
+///
+/// Maintained atomically on every mutating operation and queryable without auth.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GlobalStats {
+    /// Total number of attestations ever created (includes imported, bridged, and multi-sig).
+    pub total_attestations: u64,
+    /// Total number of attestations that have been revoked.
+    pub total_revocations: u64,
+    /// Current number of registered issuers (incremented on register, decremented on remove).
+    pub total_issuers: u64,
+}
+
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Attestation {

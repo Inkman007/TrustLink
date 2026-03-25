@@ -398,6 +398,34 @@ let attestations = contract.get_subject_attestations(&user_address, &0, &10);
 let issued = contract.get_issuer_attestations(&issuer_address, &0, &10);
 ```
 
+## Global Statistics
+
+`get_global_stats(env: Env) -> GlobalStats` returns a snapshot of contract-wide counters. No authentication is required — it is safe to call from dashboards, analytics tools, and indexers.
+
+```rust
+let stats = contract.get_global_stats();
+// stats.total_attestations — all attestations ever created (native, imported, bridged, multi-sig)
+// stats.total_revocations  — all revocations ever performed (single + batch)
+// stats.total_issuers      — current number of registered issuers
+```
+
+**`GlobalStats` fields:**
+
+| Field | Type | Description |
+|---|---|---|
+| `total_attestations` | `u64` | Cumulative count of all attestations created |
+| `total_revocations` | `u64` | Cumulative count of all revocations |
+| `total_issuers` | `u64` | Current registered issuer count (live, not cumulative) |
+
+Stats are updated atomically on every mutating operation:
+- `register_issuer` → increments `total_issuers`
+- `remove_issuer` → decrements `total_issuers` (saturating at 0)
+- `create_attestation`, `import_attestation`, `bridge_attestation` → each increments `total_attestations` by 1
+- `create_attestations_batch` → increments `total_attestations` by the number of subjects
+- `cosign_attestation` (on threshold reached) → increments `total_attestations` by 1
+- `revoke_attestation` → increments `total_revocations` by 1
+- `revoke_attestations_batch` → increments `total_revocations` by the number revoked
+
 ## Integration Example
 
 Here's how another contract would verify attestations:

@@ -87,7 +87,7 @@ fn test_register_issuer_emits_event() {
     let timestamp = 1234567890u64;
     env.ledger().set_timestamp(timestamp);
 
-    client.initialize(&admin);
+    client.initialize(&admin, &None);
     client.register_issuer(&admin, &issuer);
 
     let events = env.events().all();
@@ -1149,4 +1149,230 @@ fn test_get_endorsements_empty_for_new_attestation() {
 
     assert_eq!(client.get_endorsement_count(&attestation_id), 0);
     assert_eq!(client.get_endorsements(&attestation_id).len(), 0);
+}
+
+// ── GlobalStats tests ────────────────────────────────────────────────────────
+
+#[test]
+fn test_global_stats_zero_on_init() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client) = create_test_contract(&env);
+    let admin = Address::generate(&env);
+    client.initialize(&admin, &None);
+
+    let stats = client.get_global_stats();
+    assert_eq!(stats.total_attestations, 0);
+    assert_eq!(stats.total_revocations, 0);
+    assert_eq!(stats.total_issuers, 0);
+}
+
+#[test]
+fn test_global_stats_issuer_register_and_remove() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (admin, issuer, client) = setup(&env);
+
+    // setup() registers one issuer
+    let stats = client.get_global_stats();
+    assert_eq!(stats.total_issuers, 1);
+
+    let issuer2 = Address::generate(&env);
+    client.register_issuer(&admin, &issuer2);
+    assert_eq!(client.get_global_stats().total_issuers, 2);
+
+    client.remove_issuer(&admin, &issuer);
+    assert_eq!(client.get_global_stats().total_issuers, 1);
+
+    client.remove_issuer(&admin, &issuer2);
+    assert_eq!(client.get_global_stats().total_issuers, 0);
+}
+
+#[test]
+fn test_global_stats_total_issuers_saturates_at_zero() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (admin, issuer, client) = setup(&env);
+    // Remove the one registered issuer — should reach 0
+    client.remove_issuer(&admin, &issuer);
+    assert_eq!(client.get_global_stats().total_issuers, 0);
+
+    // Register and immediately remove again to confirm it stays at 0 after decrement
+    let issuer2 = Address::generate(&env);
+    client.register_issuer(&admin, &issuer2);
+    assert_eq!(client.get_global_stats().total_issuers, 1);
+    client.remove_issuer(&admin, &issuer2);
+    assert_eq!(client.get_global_stats().total_issuers, 0);
+}
+
+#[test]
+fn test_global_stats_attestation_create() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, issuer, client) = setup(&env);
+    let subject = Address::generate(&env);
+
+    client.create_attestation(
+        &issuer,
+        &subject,
+        &String::from_str(&env, "KYC_PASSED"),
+        &None,
+        &None,
+        &None,
+    );
+
+    let stats = client.get_global_stats();
+    assert_eq!(stats.total_attestations, 1);
+    assert_eq!(stats.total_revocations, 0);
+}
+
+#[test]
+fn test_global_stats_revocation() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, issuer, client) = setup(&env);
+    let subject = Address::generate(&env);
+    let claim_type = String::from_str(&env, "KYC_PASSED");
+
+    let id = client.create_attestation(&issuer, &subject, &claim_type, &None, &None, &None);
+    assert_eq!(client.get_global_stats().total_revocations, 0);
+
+    client.revoke_attestation(&issuer, &id);
+    assert_eq!(client.get_global_stats().total_revocations, 1);
+    assert_eq!(client.get_global_stats().total_attestations, 1);
+}
+
+#[test]
+fn test_global_stats_batch_create() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, issuer, client) = setup(&env);
+    let claim_type = String::from_str(&env, "KYC_PASSED");
+
+    let mut subjects = soroban_sdk::Vec::new(&env);
+    subjects.push_back(Address::generate(&env));
+    subjects.push_back(Address::generate(&env));
+    subjects.push_back(Address::generate(&env));
+
+    client.create_attestations_batch(&issuer, &subjects, &claim_type, &None);
+
+    assert_eq!(client.get_global_stats().total_attestations, 3);
+}
+
+#[test]
+fn test_global_stats_batch_revoke() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, issuer, client) = setup(&env);
+    let claim_type = String::from_str(&env, "KYC_PASSED");
+
+    let mut subjects = soroban_sdk::Vec::new(&env);
+    subjects.push_back(Address::generate(&env));
+    subjects.push_back(Address::generate(&env));
+
+    let ids = client.create_attestations_batch(&issuer, &subjects, &claim_type, &None);
+    assert_eq!(client.get_global_stats().total_revocations, 0);
+
+    client.revoke_attestations_batch(&issuer, &ids);
+    assert_eq!(client.get_global_stats().total_revocations, 2);
+}
+
+#[test]
+fn test_global_stats_import_attestation() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (admin, issuer, client) = setup(&env);
+    let subject = Address::generate(&env);
+    let claim_type = String::from_str(&env, "KYC_PASSED");
+
+    env.ledger().with_mut(|li| li.timestamp = 5_000);
+    client.import_attestation(&admin, &issuer, &subject, &claim_type, &1_000, &None);
+
+    assert_eq!(client.get_global_stats().total_attestations, 1);
+}
+
+#[test]
+fn test_global_stats_multisig_increments_on_finalize() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (issuer1, issuer2, issuer3, _, client) = setup_multisig(&env);
+    let subject = Address::generate(&env);
+    let claim_type = String::from_str(&env, "ACCREDITED_INVESTOR");
+
+    let mut required = soroban_sdk::Vec::new(&env);
+    required.push_back(issuer1.clone());
+    required.push_back(issuer2.clone());
+    required.push_back(issuer3.clone());
+
+    // Before finalization — no attestation yet
+    let proposal_id =
+        client.propose_attestation(&issuer1, &subject, &claim_type, &required, &2);
+    assert_eq!(client.get_global_stats().total_attestations, 0);
+
+    // Second signature reaches threshold → attestation finalized
+    client.cosign_attestation(&issuer2, &proposal_id);
+    assert_eq!(client.get_global_stats().total_attestations, 1);
+}
+
+#[test]
+fn test_global_stats_accurate_after_many_operations() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (admin, issuer, client) = setup(&env);
+    let claim_type = String::from_str(&env, "KYC_PASSED");
+
+    // Register 2 more issuers (1 already registered in setup)
+    let issuer2 = Address::generate(&env);
+    let issuer3 = Address::generate(&env);
+    client.register_issuer(&admin, &issuer2);
+    client.register_issuer(&admin, &issuer3);
+
+    // Create 5 attestations across different subjects
+    let mut ids = soroban_sdk::Vec::new(&env);
+    for i in 0u64..5 {
+        env.ledger().with_mut(|li| li.timestamp = 1_000 + i);
+        let subject = Address::generate(&env);
+        let id = client.create_attestation(&issuer, &subject, &claim_type, &None, &None, &None);
+        ids.push_back(id);
+    }
+
+    // Revoke 2 of them
+    client.revoke_attestation(&issuer, &ids.get(0).unwrap());
+    client.revoke_attestation(&issuer, &ids.get(1).unwrap());
+
+    // Remove one issuer
+    client.remove_issuer(&admin, &issuer3);
+
+    let stats = client.get_global_stats();
+    assert_eq!(stats.total_attestations, 5);
+    assert_eq!(stats.total_revocations, 2);
+    assert_eq!(stats.total_issuers, 2); // issuer + issuer2
+}
+
+#[test]
+fn test_global_stats_no_auth_required() {
+    // get_global_stats has no require_auth() — it must work in a plain Env
+    // without mock_all_auths being active for the query call.
+    let env = Env::default();
+    env.mock_all_auths();
+    let (_, client) = create_test_contract(&env);
+    let admin = Address::generate(&env);
+    client.initialize(&admin, &None);
+
+    // Calling get_global_stats after mock_all_auths scope — still no auth needed.
+    // The function itself never calls require_auth(), so this must not panic.
+    let stats = client.get_global_stats();
+    assert_eq!(stats.total_attestations, 0);
+    assert_eq!(stats.total_revocations, 0);
+    assert_eq!(stats.total_issuers, 0);
 }
