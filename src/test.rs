@@ -1072,7 +1072,7 @@ fn test_revoke_reason_exactly_128_chars_accepted() {
     let id = client.create_attestation(&issuer, &subject, &claim_type, &None, &None, &None);
 
     // Exactly 128 'a' characters
-    let exact_reason = String::from_str(&env, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+    let exact_reason = String::from_str(&env, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
     client.revoke_attestation(&issuer, &id, &Some(exact_reason.clone()));
 
     let attestation = client.get_attestation(&id);
@@ -1515,4 +1515,84 @@ fn test_health_check_after_operations() {
     let status = client.health_check();
     assert_eq!(status.total_attestations, 2);
     assert_eq!(status.issuer_count, 1);
+}
+
+// ---------------------------------------------------------------------------
+// Issuer removal – attestation persistence
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_attestation_remains_valid_after_issuer_removal() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (admin, issuer, client) = setup(&env);
+
+    let subject = Address::generate(&env);
+    let claim = String::from_str(&env, "KYC_PASSED");
+    let att_id = client.create_attestation(&issuer, &subject, &claim, &None, &None, &None);
+
+    // Remove the issuer
+    client.remove_issuer(&admin, &issuer);
+
+    // Attestation should still be retrievable and valid
+    let att = client.get_attestation(&att_id);
+    assert!(!att.revoked);
+    assert_eq!(att.issuer, issuer);
+    assert_eq!(att.claim_type, claim);
+}
+
+#[test]
+fn test_has_valid_claim_true_after_issuer_removal() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (admin, issuer, client) = setup(&env);
+
+    let subject = Address::generate(&env);
+    let claim = String::from_str(&env, "KYC_PASSED");
+    client.create_attestation(&issuer, &subject, &claim, &None, &None, &None);
+
+    // Remove the issuer
+    client.remove_issuer(&admin, &issuer);
+
+    // has_valid_claim should still return true
+    assert!(client.has_valid_claim(&subject, &claim));
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #3)")]
+fn test_removed_issuer_cannot_create_new_attestation() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (admin, issuer, client) = setup(&env);
+
+    // Remove the issuer
+    client.remove_issuer(&admin, &issuer);
+
+    // Attempting to create a new attestation should fail with Unauthorized
+    let subject = Address::generate(&env);
+    let claim = String::from_str(&env, "KYC_PASSED");
+    client.create_attestation(&issuer, &subject, &claim, &None, &None, &None);
+}
+
+#[test]
+fn test_removed_issuer_can_revoke_own_attestation() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (admin, issuer, client) = setup(&env);
+
+    let subject = Address::generate(&env);
+    let claim = String::from_str(&env, "KYC_PASSED");
+    let att_id = client.create_attestation(&issuer, &subject, &claim, &None, &None, &None);
+
+    // Remove the issuer
+    client.remove_issuer(&admin, &issuer);
+
+    // Removed issuer can still revoke their own attestation because
+    // revoke_attestation only checks attestation.issuer == caller,
+    // not whether the caller is currently registered.
+    client.revoke_attestation(&issuer, &att_id, &None);
+
+    let att = client.get_attestation(&att_id);
+    assert!(att.revoked);
+    assert!(!client.has_valid_claim(&subject, &claim));
 }
