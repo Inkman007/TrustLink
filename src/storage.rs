@@ -83,6 +83,7 @@ const DAY_IN_LEDGERS: u32 = 17280;
 const DEFAULT_TTL_DAYS: u32 = 30;
 const DEFAULT_INSTANCE_LIFETIME: u32 = DAY_IN_LEDGERS * DEFAULT_TTL_DAYS;
 // Only extend TTL on read if remaining TTL drops below this threshold (7 days)
+#[allow(dead_code)]
 const MIN_TTL_THRESHOLD: u32 = 7 * DAY_IN_LEDGERS;
 
 /// Get the TTL in ledgers for the configured number of days.

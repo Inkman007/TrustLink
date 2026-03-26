@@ -1,4 +1,6 @@
 #![no_std]
+// Forbid panic-prone patterns in production code; tests are exempt.
+#![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
 
 mod errors;
 mod events;
