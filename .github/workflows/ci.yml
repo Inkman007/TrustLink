@@ -25,6 +25,14 @@ jobs:
       - name: Run tests
         run: cargo test
 
+      - name: Verify snapshots are up to date
+        # Regenerate snapshots and fail if any tracked file differs.
+        # To update snapshots locally: cargo test, then commit the changes.
+        run: |
+          cargo test
+          git diff --exit-code test_snapshots/ || \
+            (echo "::error::Snapshot files changed. Run 'cargo test' locally and commit the updated snapshots." && exit 1)
+
       - name: Build WASM
         run: cargo build --target wasm32-unknown-unknown --release
 
