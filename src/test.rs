@@ -1607,3 +1607,56 @@ fn test_health_check_after_operations() {
     assert_eq!(status.total_attestations, 2);
     assert_eq!(status.issuer_count, 1);
 }
+
+// ── Error variant coverage ───────────────────────────────────────────────────
+
+#[test]
+fn test_error_already_initialized() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let (_, client) = create_test_contract(&env);
+
+    client.initialize(&admin, &None);
+    let result = client.try_initialize(&admin, &None);
+    assert_eq!(result, Err(Ok(Error::AlreadyInitialized)));
+}
+
+#[test]
+fn test_error_not_initialized() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    // Call get_version (which requires initialization) before initialize.
+    let (_, client) = create_test_contract(&env);
+    let result = client.try_get_version();
+    assert_eq!(result, Err(Ok(Error::NotInitialized)));
+}
+
+#[test]
+fn test_error_not_found() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, _, client) = setup(&env);
+    let fake_id = String::from_str(&env, "nonexistent_attestation_id");
+    let result = client.try_get_attestation(&fake_id);
+    assert_eq!(result, Err(Ok(Error::NotFound)));
+}
+
+#[test]
+fn test_error_already_revoked() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, issuer, client) = setup(&env);
+    let subject = Address::generate(&env);
+    let claim_type = String::from_str(&env, "KYC_PASSED");
+
+    let id = client.create_attestation(&issuer, &subject, &claim_type, &None, &None, &None);
+    client.revoke_attestation(&issuer, &id, &None);
+
+    let result = client.try_revoke_attestation(&issuer, &id, &None);
+    assert_eq!(result, Err(Ok(Error::AlreadyRevoked)));
+}
