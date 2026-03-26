@@ -113,7 +113,23 @@ contract.register_issuer(&admin, &issuer_address);
 
 // Check if address is authorized
 let is_authorized = contract.is_issuer(&issuer_address);
+
+// Admin removes an issuer
+contract.remove_issuer(&admin, &issuer_address);
 ```
+
+#### Issuer Removal Behavior
+
+When an issuer is removed via `remove_issuer`:
+
+| Action                                                   | Allowed? | Reason                                                                                                               |
+| -------------------------------------------------------- | -------- | -------------------------------------------------------------------------------------------------------------------- |
+| Existing attestations remain valid                       | Yes      | Attestation validity depends only on revocation and expiration status, not issuer registration                       |
+| `has_valid_claim` returns true for existing attestations | Yes      | Validity checks do not verify issuer registration                                                                    |
+| Removed issuer creates new attestations                  | **No**   | `create_attestation` calls `require_issuer`, which rejects unregistered issuers                                      |
+| Removed issuer revokes their own attestations            | Yes      | `revoke_attestation` only checks that the caller matches the attestation's original issuer, not current registration |
+
+This is by design — attestations represent signed facts at a point in time. Removing an issuer prevents future issuance but does not retroactively invalidate previously issued attestations.
 
 ### Register Bridge Contracts
 

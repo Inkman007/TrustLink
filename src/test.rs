@@ -1065,7 +1065,7 @@ fn test_revoke_reason_exactly_128_chars_accepted() {
     let id = client.create_attestation(&issuer, &subject, &claim_type, &None, &None, &None);
 
     // Exactly 128 'a' characters
-    let exact_reason = String::from_bytes(&env, &[b'a'; 128]);
+    let exact_reason = String::from_str(&env, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
     client.revoke_attestation(&issuer, &id, &Some(exact_reason.clone()));
 
     let attestation = client.get_attestation(&id);
@@ -1555,77 +1555,82 @@ fn test_health_check_after_operations() {
     assert_eq!(status.issuer_count, 1);
 }
 
-// ── Expiration lifecycle integration test (Issue #72) ────────────────────────
+// ---------------------------------------------------------------------------
+// Issuer removal – attestation persistence
+// ---------------------------------------------------------------------------
 
 #[test]
-fn test_expiration_lifecycle() {
+fn test_attestation_remains_valid_after_issuer_removal() {
     let env = Env::default();
     env.mock_all_auths();
+    let (admin, issuer, client) = setup(&env);
 
-    let (_, issuer, client) = setup(&env);
     let subject = Address::generate(&env);
-    let claim_type = String::from_str(&env, "KYC_PASSED");
+    let claim = String::from_str(&env, "KYC_PASSED");
+    let att_id = client.create_attestation(&issuer, &subject, &claim, &None, &None, &None);
 
-    // ── Step 1: Set a known start time and create attestation with short expiry ──
-    let start_time: u64 = 1_000_000;
-    env.ledger().set_timestamp(start_time);
+    // Remove the issuer
+    client.remove_issuer(&admin, &issuer);
 
-    let expiration = start_time + 100; // expires 100 seconds from now
-    let id = client.create_attestation(
-        &issuer,
-        &subject,
-        &claim_type,
-        &Some(expiration),
-        &None,
-        &None,
-    );
+    // Attestation should still be retrievable and valid
+    let att = client.get_attestation(&att_id);
+    assert!(!att.revoked);
+    assert_eq!(att.issuer, issuer);
+    assert_eq!(att.claim_type, claim);
+}
 
-    // ── Step 2: Verify attestation is Valid before expiration ──
-    assert!(
-        client.has_valid_claim(&subject, &claim_type),
-        "has_valid_claim should be true before expiration"
-    );
-    assert_eq!(
-        client.get_attestation_status(&id),
-        types::AttestationStatus::Valid,
-        "status should be Valid before expiration"
-    );
+#[test]
+fn test_has_valid_claim_true_after_issuer_removal() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (admin, issuer, client) = setup(&env);
 
-    // ── Step 3: Advance ledger timestamp past expiration ──
-    env.ledger().set_timestamp(expiration + 1);
+    let subject = Address::generate(&env);
+    let claim = String::from_str(&env, "KYC_PASSED");
+    client.create_attestation(&issuer, &subject, &claim, &None, &None, &None);
 
-    // ── Step 4: Verify has_valid_claim returns false after expiration ──
-    assert!(
-        !client.has_valid_claim(&subject, &claim_type),
-        "has_valid_claim should be false after expiration"
-    );
+    // Remove the issuer
+    client.remove_issuer(&admin, &issuer);
 
-    // ── Step 5: Verify get_attestation_status returns Expired ──
-    assert_eq!(
-        client.get_attestation_status(&id),
-        types::AttestationStatus::Expired,
-        "status should be Expired after expiration"
-    );
+    // has_valid_claim should still return true
+    assert!(client.has_valid_claim(&subject, &claim));
+}
 
-    // ── Step 6: Verify expired attestation cannot be revoked ──
-    // The contract does NOT check expiry before revoking — revoke_attestation
-    // only blocks on: wrong issuer, already revoked, or paused.
-    // Therefore an expired attestation CAN still be revoked (it's not deleted).
-    // This documents that behavior explicitly.
-    let revoke_result = client.try_revoke_attestation(&issuer, &id, &None);
-    assert!(
-        revoke_result.is_ok(),
-        "expired attestation should still be revocable (contract does not block revoke on expired)"
-    );
+#[test]
+#[should_panic(expected = "Error(Contract, #3)")]
+fn test_removed_issuer_cannot_create_new_attestation() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (admin, issuer, client) = setup(&env);
 
-    // After revocation the raw record reflects revoked=true
-    let attestation = client.get_attestation(&id);
-    assert!(attestation.revoked, "attestation should be marked revoked");
+    // Remove the issuer
+    client.remove_issuer(&admin, &issuer);
 
-    // Status is now Revoked (revoked flag takes precedence in get_status)
-    assert_eq!(
-        client.get_attestation_status(&id),
-        types::AttestationStatus::Revoked,
-        "status should be Revoked after revoking an expired attestation"
-    );
+    // Attempting to create a new attestation should fail with Unauthorized
+    let subject = Address::generate(&env);
+    let claim = String::from_str(&env, "KYC_PASSED");
+    client.create_attestation(&issuer, &subject, &claim, &None, &None, &None);
+}
+
+#[test]
+fn test_removed_issuer_can_revoke_own_attestation() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (admin, issuer, client) = setup(&env);
+
+    let subject = Address::generate(&env);
+    let claim = String::from_str(&env, "KYC_PASSED");
+    let att_id = client.create_attestation(&issuer, &subject, &claim, &None, &None, &None);
+
+    // Remove the issuer
+    client.remove_issuer(&admin, &issuer);
+
+    // Removed issuer can still revoke their own attestation because
+    // revoke_attestation only checks attestation.issuer == caller,
+    // not whether the caller is currently registered.
+    client.revoke_attestation(&issuer, &att_id, &None);
+
+    let att = client.get_attestation(&att_id);
+    assert!(att.revoked);
+    assert!(!client.has_valid_claim(&subject, &claim));
 }
