@@ -47,4 +47,6 @@ pub enum Error {
     RequestExpired = 26,
     /// A duplicate request already exists for this subject/issuer/claim_type combination.
     DuplicateRequest = 27,
+    /// The claim type string is empty, too long, or contains invalid characters.
+    InvalidClaimType = 28,
 }
