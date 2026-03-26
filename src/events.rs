@@ -206,4 +206,18 @@ impl Events {
         env.events()
             .publish((symbol_short!("unpaused"),), (admin.clone(), timestamp));
     }
+
+    /// Emitted when an attestation is transferred to a new issuer by admin.
+    pub fn attestation_transferred(
+        env: &Env,
+        attestation_id: &String,
+        old_issuer: &Address,
+        new_issuer: &Address,
+    ) {
+        env.events().publish(
+            (symbol_short!("att_xfer"), old_issuer.clone()),
+            (attestation_id.clone(), new_issuer.clone()),
+        );
+    }
 }
+

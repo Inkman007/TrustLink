@@ -150,6 +150,7 @@ pub enum AuditAction {
     Revoked,
     Renewed,
     Updated,
+    Transferred,
 }
 
 /// A single immutable entry in an attestation's audit log.
